@@ -6,7 +6,7 @@ Offline-first mobile gallery web app with web image search.
 - Material UI v6 (Material 3 design, dark theme)
 - Mobile-first responsive grid
 - Pick local photos/videos/gifs from device
-- **Search the web** for Creative Commons images (OpenVerse API, 50M+ images, no key)
+- **Search the web** for free images (Wikimedia Commons, 100M+ files, no key, no auth)
 - Save web images to IndexedDB — fully offline
 - Smooth animations: fade/scale/zoom on load, hover scale, slide transitions
 - PWA — installable, custom service worker for offline
@@ -37,5 +37,5 @@ npm run preview
 ## Tech
 
 - **Storage**: IndexedDB (blobs + metadata)
-- **Search**: [OpenVerse API](https://api.openverse.org) — open, no API key needed, 200 req/day anonymous
+- **Search**: [Wikimedia Commons API](https://commons.wikimedia.org/w/api.php) — open, no API key, no auth, CORS-friendly
 - **Offline**: custom service worker (`public/sw.js`)

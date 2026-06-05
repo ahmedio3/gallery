@@ -23,7 +23,7 @@ const SearchView = ({ onSave, savedIds }: Props) => {
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
   const [data, setData] = useState<SearchResponse | null>(null)
-  const [page, setPage] = useState(1)
+  const [, setOffset] = useState(0)
   const [loading, setLoading] = useState(false)
   const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string>('')
@@ -33,13 +33,13 @@ const SearchView = ({ onSave, savedIds }: Props) => {
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  const runSearch = async (q: string, p: number, append: boolean) => {
+  const runSearch = async (q: string, off: number, append: boolean) => {
     if (!q.trim()) return
     if (append) setLoadingMore(true)
     else setLoading(true)
     setError('')
     try {
-      const res = await searchImages(q, p, 24)
+      const res = await searchImages(q, off, 24)
       setData(prev => append && prev
         ? { ...res, results: [...prev.results, ...res.results] }
         : res)
@@ -56,22 +56,22 @@ const SearchView = ({ onSave, savedIds }: Props) => {
     const q = query.trim()
     if (!q) return
     setActiveQuery(q)
-    setPage(1)
-    runSearch(q, 1, false)
+    setOffset(0)
+    runSearch(q, 0, false)
   }
 
   useEffect(() => {
     if (!sentinelRef.current || !data || loadingMore) return
     const obs = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && page < data.pageCount && !loadingMore) {
-        const next = page + 1
-        setPage(next)
+      if (entries[0].isIntersecting && data.hasMore && !loadingMore) {
+        const next = data.nextOffset
+        setOffset(next)
         runSearch(activeQuery, next, true)
       }
     }, { rootMargin: '400px' })
     obs.observe(sentinelRef.current)
     return () => obs.disconnect()
-  }, [data, page, loadingMore, activeQuery])
+  }, [data, loadingMore, activeQuery])
 
   const saveImage = async (r: SearchResult) => {
     if (saving.has(r.id) || savedIds.has(r.id)) return
@@ -147,7 +147,7 @@ const SearchView = ({ onSave, savedIds }: Props) => {
               <Grow in key={s} timeout={300 + i * 60}>
                 <Chip
                   label={s}
-                  onClick={() => { setQuery(s); setActiveQuery(s); setPage(1); runSearch(s, 1, false) }}
+                  onClick={() => { setQuery(s); setActiveQuery(s); setOffset(0); runSearch(s, 0, false) }}
                   sx={{ cursor: 'pointer', transition: 'transform 0.2s', '&:hover': { transform: 'scale(1.08)' } }}
                 />
               </Grow>
@@ -156,7 +156,7 @@ const SearchView = ({ onSave, savedIds }: Props) => {
           <Box sx={{ mt: 4, textAlign: 'center', opacity: 0.6 }}>
             <SearchIcon sx={{ fontSize: 80, opacity: 0.3 }} />
             <Typography variant="body2" sx={{ mt: 1 }}>
-              Search millions of Creative Commons images
+              Search millions of free images on Wikimedia Commons
             </Typography>
           </Box>
         </Box>
@@ -177,7 +177,7 @@ const SearchView = ({ onSave, savedIds }: Props) => {
       {data && !loading && (
         <>
           <Typography variant="caption" sx={{ px: 2, display: 'block', opacity: 0.6 }}>
-            {data.count.toLocaleString()} results for "{activeQuery}"
+            {data.results.length} results for "{activeQuery}"
           </Typography>
           <Grid container spacing={1} sx={{ p: 1 }}>
             {data.results.map((r, i) => {
