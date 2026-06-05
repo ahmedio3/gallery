@@ -2,52 +2,61 @@ import { useEffect, useRef, useState } from 'react'
 import {
   Box, TextField, InputAdornment, IconButton, Card, CardActionArea,
   CardMedia, Typography, Skeleton, Chip, Alert, CircularProgress,
-  Grow, Zoom, Fab,
+  Grow, Zoom, Fab, Tooltip,
 } from '@mui/material'
 import Grid from '@mui/material/Grid2'
 import SearchIcon from '@mui/icons-material/Search'
 import ClearIcon from '@mui/icons-material/Clear'
 import DownloadIcon from '@mui/icons-material/Download'
 import CheckCircleIcon from '@mui/icons-material/CheckCircle'
-import { searchImages, downloadAsBlob, type SearchResponse } from './api'
-import type { SearchResult, MediaItem } from './types'
+import { searchAll, type ProviderStatus } from './providers'
+import { downloadAsBlob } from './api'
+import type { SearchResult, MediaItem, Settings } from './types'
+import { t } from './i18n'
 
 interface Props {
   onSave: (item: MediaItem, blob: Blob) => Promise<void>
   savedIds: Set<string>
+  settings: Settings
 }
 
-const SUGGESTIONS = ['cats', 'nature', 'mountains', 'space', 'ocean', 'flowers', 'city', 'dogs']
+const SUGGESTIONS_EN = ['cats', 'nature', 'mountains', 'space', 'ocean', 'flowers', 'city', 'dogs']
+const SUGGESTIONS_AR = ['قطط', 'طبيعة', 'جبال', 'فضاء', 'محيط', 'زهور', 'مدينة', 'كلاب']
 
-const SearchView = ({ onSave, savedIds }: Props) => {
+const SearchView = ({ onSave, savedIds, settings }: Props) => {
+  const lang = settings.language
+  const tr = t(lang)
+  const isAr = lang === 'ar'
   const [query, setQuery] = useState('')
   const [activeQuery, setActiveQuery] = useState('')
-  const [data, setData] = useState<SearchResponse | null>(null)
-  const [, setOffset] = useState(0)
+  const [results, setResults] = useState<SearchResult[]>([])
+  const [statuses, setStatuses] = useState<ProviderStatus[]>([])
   const [loading, setLoading] = useState(false)
-  const [loadingMore, setLoadingMore] = useState(false)
   const [error, setError] = useState<string>('')
   const [saving, setSaving] = useState<Set<string>>(new Set())
   const inputRef = useRef<HTMLInputElement>(null)
-  const sentinelRef = useRef<HTMLDivElement>(null)
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => { inputRef.current?.focus() }, [])
 
-  const runSearch = async (q: string, off: number, append: boolean) => {
+  const runSearch = async (q: string) => {
     if (!q.trim()) return
-    if (append) setLoadingMore(true)
-    else setLoading(true)
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+    setLoading(true)
     setError('')
+    setResults([])
+    setStatuses([])
     try {
-      const res = await searchImages(q, off, 24)
-      setData(prev => append && prev
-        ? { ...res, results: [...prev.results, ...res.results] }
-        : res)
+      const res = await searchAll(q, settings, 12, controller.signal)
+      setResults(res.results)
+      setStatuses(res.statuses)
+      if (!res.results.length) setError(tr.noResults)
     } catch (e: any) {
-      setError(e.message || 'Search failed. Check your connection.')
+      if (e.name !== 'AbortError') setError(e.message || 'Search failed')
     } finally {
       setLoading(false)
-      setLoadingMore(false)
     }
   }
 
@@ -56,22 +65,8 @@ const SearchView = ({ onSave, savedIds }: Props) => {
     const q = query.trim()
     if (!q) return
     setActiveQuery(q)
-    setOffset(0)
-    runSearch(q, 0, false)
+    runSearch(q)
   }
-
-  useEffect(() => {
-    if (!sentinelRef.current || !data || loadingMore) return
-    const obs = new IntersectionObserver(entries => {
-      if (entries[0].isIntersecting && data.hasMore && !loadingMore) {
-        const next = data.nextOffset
-        setOffset(next)
-        runSearch(activeQuery, next, true)
-      }
-    }, { rootMargin: '400px' })
-    obs.observe(sentinelRef.current)
-    return () => obs.disconnect()
-  }, [data, loadingMore, activeQuery])
 
   const saveImage = async (r: SearchResult) => {
     if (saving.has(r.id) || savedIds.has(r.id)) return
@@ -103,15 +98,19 @@ const SearchView = ({ onSave, savedIds }: Props) => {
     }
   }
 
+  const suggestions = isAr ? SUGGESTIONS_AR : SUGGESTIONS_EN
+  const enabledCount = statuses.filter(s => s.ok).length
+  const failedProviders = statuses.filter(s => !s.ok)
+
   return (
-    <Box sx={{ pb: 12 }}>
+    <Box sx={{ pb: 12, direction: isAr ? 'rtl' : 'ltr' }}>
       <Box component="form" onSubmit={handleSubmit} sx={{ p: 1.5, position: 'sticky', top: 64, zIndex: 5, backdropFilter: 'blur(20px)', bgcolor: 'rgba(0,0,0,0.6)' }}>
         <TextField
           inputRef={inputRef}
           fullWidth
           value={query}
           onChange={e => setQuery(e.target.value)}
-          placeholder="Search images..."
+          placeholder={isAr ? 'ابحث عن صور...' : 'Search images...'}
           variant="outlined"
           size="small"
           sx={{
@@ -141,13 +140,15 @@ const SearchView = ({ onSave, savedIds }: Props) => {
 
       {!activeQuery && (
         <Box sx={{ px: 2, pt: 2 }}>
-          <Typography variant="overline" sx={{ opacity: 0.7 }}>Try</Typography>
+          <Typography variant="overline" sx={{ opacity: 0.7 }}>
+            {isAr ? 'جرّب' : 'Try'}
+          </Typography>
           <Box sx={{ display: 'flex', flexWrap: 'wrap', gap: 1, mt: 1 }}>
-            {SUGGESTIONS.map((s, i) => (
+            {suggestions.map((s, i) => (
               <Grow in key={s} timeout={300 + i * 60}>
                 <Chip
                   label={s}
-                  onClick={() => { setQuery(s); setActiveQuery(s); setOffset(0); runSearch(s, 0, false) }}
+                  onClick={() => { setQuery(s); setActiveQuery(s); runSearch(s) }}
                   sx={{ cursor: 'pointer', transition: 'transform 0.2s', '&:hover': { transform: 'scale(1.08)' } }}
                 />
               </Grow>
@@ -155,32 +156,58 @@ const SearchView = ({ onSave, savedIds }: Props) => {
           </Box>
           <Box sx={{ mt: 4, textAlign: 'center', opacity: 0.6 }}>
             <SearchIcon sx={{ fontSize: 80, opacity: 0.3 }} />
-            <Typography variant="body2" sx={{ mt: 1 }}>
-              Search millions of free images on Wikimedia Commons
+            <Typography variant="body2" sx={{ mt: 1 }}>{tr.searchHint}</Typography>
+            <Typography variant="caption" sx={{ display: 'block', mt: 1, opacity: 0.7 }}>
+              {isAr ? 'يمكنك إضافة مفاتيح API من الإعدادات' : 'Add API keys in Settings for more sources'}
             </Typography>
           </Box>
         </Box>
       )}
 
-      {error && <Alert severity="error" sx={{ m: 2 }}>{error}</Alert>}
+      {statuses.length > 0 && (
+        <Box sx={{ px: 2, py: 1, display: 'flex', flexWrap: 'wrap', gap: 0.5, alignItems: 'center' }}>
+          <Chip
+            size="small"
+            label={isAr ? '🔞 NSFW: مفعّل' : '🔞 NSFW: ON'}
+            color="warning"
+            sx={{ height: 20, fontSize: 10, fontWeight: 600 }}
+          />
+          {statuses.map(s => (
+            <Tooltip
+              key={s.id}
+              title={s.ok ? `${s.count} results` : s.error || 'failed'}
+            >
+              <Chip
+                size="small"
+                label={s.id}
+                color={s.ok ? (s.count > 0 ? 'success' : 'default') : 'error'}
+                variant={s.ok ? 'outlined' : 'filled'}
+                sx={{ height: 20, fontSize: 10, opacity: s.ok ? 1 : 0.7 }}
+              />
+            </Tooltip>
+          ))}
+        </Box>
+      )}
+
+      {error && <Alert severity={failedProviders.length === statuses.length && statuses.length > 0 ? 'warning' : 'info'} sx={{ m: 2 }}>{error}</Alert>}
 
       {loading && (
         <Grid container spacing={1} sx={{ p: 1 }}>
           {Array.from({ length: 9 }).map((_, i) => (
-            <Grid key={i} size={{ xs: 4, sm: 4, md: 3 }}>
+            <Grid key={i} size={{ xs: 6, sm: 4, md: 3 }}>
               <Skeleton variant="rectangular" sx={{ aspectRatio: '1/1', borderRadius: 1.5 }} animation="wave" />
             </Grid>
           ))}
         </Grid>
       )}
 
-      {data && !loading && (
+      {!loading && results.length > 0 && (
         <>
           <Typography variant="caption" sx={{ px: 2, display: 'block', opacity: 0.6 }}>
-            {data.results.length} results for "{activeQuery}"
+            {results.length} {isAr ? 'نتيجة من' : 'results from'} {enabledCount} {isAr ? 'مصدر' : 'sources'}
           </Typography>
           <Grid container spacing={1} sx={{ p: 1 }}>
-            {data.results.map((r, i) => {
+            {results.map((r, i) => {
               const isSaved = savedIds.has(r.id)
               const isSaving = saving.has(r.id)
               return (
@@ -195,6 +222,13 @@ const SearchView = ({ onSave, savedIds }: Props) => {
                           loading="lazy"
                           sx={{ width: '100%', height: '100%', objectFit: 'cover' }}
                         />
+                        <Box sx={{
+                          position: 'absolute', top: 4, [isAr ? 'left' : 'right']: 4,
+                          bgcolor: 'rgba(0,0,0,0.6)', color: 'white',
+                          px: 0.7, py: 0.2, borderRadius: 0.5, fontSize: 9, fontWeight: 600,
+                        }}>
+                          {r.provider}
+                        </Box>
                         {isSaved && (
                           <Box sx={{
                             position: 'absolute', inset: 0,
@@ -218,7 +252,7 @@ const SearchView = ({ onSave, savedIds }: Props) => {
                             size="small"
                             color="primary"
                             onClick={(e) => { e.stopPropagation(); saveImage(r) }}
-                            sx={{ position: 'absolute', bottom: 6, right: 6, opacity: 0, transition: 'opacity 0.2s', '.MuiCard-root:hover &': { opacity: 1 } }}
+                            sx={{ position: 'absolute', bottom: 6, [isAr ? 'left' : 'right']: 6, opacity: 0, transition: 'opacity 0.2s', '.MuiCard-root:hover &': { opacity: 1 } }}
                           >
                             <DownloadIcon fontSize="small" />
                           </Fab>
@@ -230,9 +264,6 @@ const SearchView = ({ onSave, savedIds }: Props) => {
               )
             })}
           </Grid>
-          <div ref={sentinelRef} style={{ height: 40, display: 'flex', justifyContent: 'center', alignItems: 'center' }}>
-            {loadingMore && <CircularProgress size={24} />}
-          </div>
         </>
       )}
     </Box>
